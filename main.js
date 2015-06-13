@@ -149,21 +149,6 @@
                                     left: 0
                                 });
                             page.getTextContent().then(function(tc){
-                                var text_layer = new TextLayerBuilder({
-                                    textLayerDiv: $text_layer.get(0),
-                                    viewport : viewport,
-                                    pageIndex: n
-                                });
-                                text_layer.setTextContent(tc);
-
-                                page_datum.text_boxes = [];
-                                text_layer.textDivs.forEach(function(div){
-                                    if(div.dataset.bbox_str) // filter out undefined bbox. seems to be a pdf.js bug.
-                                        page_datum.text_boxes.push({
-                                            text: div.innerText,
-                                            bbox: JSON.parse(div.dataset.bbox_str)
-                                        });
-                                });
                                 page_datum.n_page = n;
                                 page_datum.n_page_total = page_data.length;
                                 page_data[n] = page_datum;
@@ -395,6 +380,8 @@
         var onMouseUp = function(event){
             var p = [event.clientX, event.clientY];
             Pla.model.getPdfPageData(cur_page).then(function(page){
+                // Todo Fix it
+                /*
                 page.text_boxes.forEach(function(item){
                     var rect = item.bbox;
                     if(rect[0] < p[0] && p[0] < rect[2] &&
@@ -406,7 +393,7 @@
                             item.text
                         );
                     }
-                });
+                });*/
             }).catch(Pla.util.handleErr);
         };
 

@@ -715,7 +715,7 @@ var Util = PDFJS.Util = (function UtilClosure() {
   // Returns a rectangle [x1, y1, x2, y2] corresponding to the
   // intersection of rect1 and rect2. If no intersection, returns 'false'
   // The rectangle coordinates of rect1, rect2 should be [x1, y1, x2, y2]
-  Util.intersectSegment = function Util_intersect(rect1, rect2) {
+  Util.intersect = function Util_intersect(rect1, rect2) {
     function compare(a, b) {
       return a - b;
     }
@@ -4756,7 +4756,7 @@ var CanvasGraphics = (function CanvasGraphicsClosure() {
                           0,
                           currentCtx.canvas.width,
                           currentCtx.canvas.height];
-      bounds = Util.intersectSegment(bounds, canvasBounds) || [0, 0, 0, 0];
+      bounds = Util.intersect(bounds, canvasBounds) || [0, 0, 0, 0];
       // Use ceil in case we're between sizes so we don't create canvas that is
       // too small and make the canvas at least 1x1 pixels.
       var offsetX = Math.floor(bounds[0]);
