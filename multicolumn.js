@@ -915,6 +915,10 @@
             }
         };
 
+        pub.copyRect = function(r){
+            return [r[0],r[1],r[2],r[3]];
+        };
+
         return pub;
     })();
 
