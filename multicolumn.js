@@ -315,9 +315,22 @@
             range_x[FOOT][0] = doc_bbox[0];
             range_x[FOOT][1] = doc_bbox[2];
 
+            var idx_rgn;
+            for(idx_rgn = 0; idx_rgn < 4; ++idx_rgn){
+                cut_pts_y[idx_rgn] = cut_pts_y[idx_rgn].sort(
+                    function(a,b){
+                        if(a < b){return -1;}
+                        else if(a > b){return 1;}
+                        else{return 0;}
+                    });
+                Pla.rectUtil.mergeOverlappingPts(cut_pts_y[idx_rgn], Pla.Param.MULTICOLUMN_MERGE_Y);
+
+                if(cut_pts_y[idx_rgn].length == 1)
+                    cut_pts_y[idx_rgn].push(Pla.rectUtil.copyRect(cut_pts_y[idx_rgn][0]));
+            }
+
             // ttX is text range, ttW is the width of the text region, and rect are actual text boxes.
             var rtn = [{},{},{},{}];
-            var idx_rgn;
             for(idx_rgn = 0; idx_rgn < 4; ++idx_rgn){
                 var rgn_bbox = Pla.rectUtil.getRectsBBox(rects[idx_rgn]);
                 rtn[idx_rgn].ttX = rgn_bbox[0];
@@ -889,6 +902,17 @@
                 rtn[1] = Math.max(rtn[1], block[1]);
             });
             return rtn;
+        };
+
+
+        pub.mergeOverlappingPts = function(pts, tolerance){
+            // assert that l was sorted
+            for(var i = 0; i < pts.length-1; ++i){
+                if(pts[i+1] - pts[i] < tolerance){
+                    pts.splice(i, 2, 0.5*(pts[i]+pts[i+1]));
+                    --i;
+                }
+            }
         };
 
         return pub;
