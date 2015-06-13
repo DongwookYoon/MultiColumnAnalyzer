@@ -181,11 +181,11 @@
                 init
             ).then(
                 batchRunPla
-            //).then(
-            //    uploadPdfLayoutJs
+            ).then(
+                uploadPdfLayoutJs
             ).then(
                 function(link){
-                    //window.top.location.replace(link);
+                    window.top.location.replace(link);
                 }
             ).catch(Pla.util.handleErr);
         };
