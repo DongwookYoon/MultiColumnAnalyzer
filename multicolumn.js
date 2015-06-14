@@ -81,8 +81,8 @@
     Pla.Histogram.prototype.lowPassFilter = function(window_size_Lpf){
         var n_cuts = Math.ceil((this.data[this.data.length-2].p-this.data[1].p)/window_size_Lpf)+1;
         var origin_left = this.data[1].p;
-        var cutsX = $.map($(new Array(n_cuts)),function(val, i) { return origin_left+window_size_Lpf*i; });
-        this.subslice(cutsX);
+        var cut_pts = $.map($(new Array(n_cuts)),function(val, i) { return origin_left+window_size_Lpf*i; });
+        this.subslice(cut_pts);
 
         var new_histogram = $.map($(new Array(n_cuts)),function(val, i) { return {p:origin_left+window_size_Lpf*i, wght:0}; });
 
@@ -130,18 +130,19 @@
     };
 
 
+    /**
+     * Calculates a double column layout from the given XY-Cut result.
+     */
     Pla.multiColumn = (function(){
         var pub = {};
 
-        function initHistograms(block_group){
-            block_group.histogram_left = new Pla.Histogram();
-            block_group.histogram_rght = new Pla.Histogram();
-            block_group.histogram_max_wght = 0;
-        }
+        // index of the double column page layout components
+        var HEAD = 0;
+        var LEFT = 1;
+        var RGHT = 2;
+        var FOOT = 3;
 
-        pub.run = function(pla_ctx, doc_bbox){
-            var block_group = pla_ctx.block_group;
-
+        pub.runHistogramAnalysis = function(block_group, alley_range){
             for(var idx_block = 0; idx_block < block_group.length; ++idx_block){
                 var group = block_group[idx_block];
                 initHistograms(group);
@@ -151,32 +152,31 @@
                     continue;
                 }
 
-                // alley is the widest cut contained in the 'alley range'.
-                var cuts = Pla.XyCut.projectAndCutRectsX(group.rects);
-                var alley = {
+                // getting the widest cut amongst all the cuts in the 'alley range'.
+                var cuts = Pla.rectUtil.projectOnXaxisAndGetCuts(group.rects);
+                var widest_cut = {
                     w: 0,
                     idx: -1,
                     mid: 0
                 };
-                alley.mid = 0;
+                widest_cut.mid = 0;
                 for(var idx_cut = 1; idx_cut < cuts.length-1; ++idx_cut){
                     var cut = cuts[idx_cut];
-                    if(pla_ctx.alley_range[0] < cut[0] && cut[1] < pla_ctx.alley_range[1]){
-                        if(alley.w < cut[1]-cut[0]){
-                            alley.w = cut[1]-cut[0];
-                            alley.idx = idx_cut;
-                            alley.mid = 0.5*(cuts[alley.idx][0]+cuts[alley.idx][1]);
+                    if(alley_range[0] < cut[0] && cut[1] < alley_range[1]){
+                        if(widest_cut.w < cut[1]-cut[0]){
+                            widest_cut.w = cut[1]-cut[0];
+                            widest_cut.idx = idx_cut;
+                            widest_cut.mid = 0.5*(cuts[widest_cut.idx][0]+cuts[widest_cut.idx][1]);
                         }
                     }
                 }
-                group.alley_mid = alley.mid;
 
                 // Perform histogram analysis when the following three conditions met:
-                if(alley.w > Pla.Param.MIN_ALLEY_W &&                           // (1) alley is wide enough
-                    alley.mid - group.bbox[0] > Pla.Param.NARROW_COLUMN_W &&    // (2) the left column is wide enough
-                    group.bbox[2] - alley.mid > Pla.Param.NARROW_COLUMN_W       // (3) the rght column is wide enough
+                if(widest_cut.w > Pla.Param.MIN_ALLEY_W &&                           // (1) alley is wide enough
+                    widest_cut.mid - group.bbox[0] > Pla.Param.NARROW_COLUMN_W &&    // (2) the left column is wide enough
+                    group.bbox[2] - widest_cut.mid > Pla.Param.NARROW_COLUMN_W       // (3) the rght column is wide enough
                 ){
-                    group.alley = cuts[alley.idx];
+                    group.alley = cuts[widest_cut.idx];
 
                     var use_left_side, window_size_Lpf; // named parameters
                     group.histogram_left.init(
@@ -206,7 +206,12 @@
 
             // among multiple groups, find the one with the maximum weight (in other words, the maximum height)
             // 'idx_group_max_wght' being -1 indicates the single column page
-            var idx_group_max_wght = block_group.reduce(
+            var max_wght_group = {
+                idx: -1,
+                alley: null
+            };
+
+            max_wght_group.idx = block_group.reduce(
                 function(prev_idx, cur_block_group, cur_idx){
                     if(prev_idx >= 0){
                         if(block_group[prev_idx].histogram_max_wght > cur_block_group.histogram_max_wght){
@@ -227,34 +232,38 @@
                 },
                 -1
             );
+            if (max_wght_group.idx != -1){
+                max_wght_group.alley = block_group[max_wght_group.idx].alley;
+            }
+            return max_wght_group;
+        };
 
-            pla_ctx.doublecolumn_idx = idx_group_max_wght;
+        function initHistograms(block_group){
+            block_group.histogram_left = new Pla.Histogram();
+            block_group.histogram_rght = new Pla.Histogram();
+            block_group.histogram_max_wght = 0;
+        }
 
-
-            // index of the double column page layout components
-            var HEAD = 0;
-            var LEFT = 1;
-            var RGHT = 2;
-            var FOOT = 3;
+        pub.categorizeTextBoxesIntoRegions = function(block_group, max_wght_group){
 
             // assigning
             var rects = [[],[],[],[]];
 
             // fill rects from the foot
             var idx_rect;
-            for(var i = block_group.length-1; i > idx_group_max_wght; --i){
+            for(var i = block_group.length-1; i > max_wght_group.idx; --i){
                 for( idx_rect = 0; idx_rect < block_group[i].rects.length; ++idx_rect){
                     rects[FOOT].push(block_group[i].rects[idx_rect]);
                 }
             }
-            if(idx_group_max_wght > -1){ // now i === idx_group_max_wght;
+            if(max_wght_group.idx > -1){ // now i === idx_group_max_wght;
                 var nj;
-                for(idx_rect = 0, nj = block_group[idx_group_max_wght].rects.length; idx_rect < nj; ++idx_rect){
-                    if(block_group[idx_group_max_wght].rects[idx_rect][0] < block_group[idx_group_max_wght].alley[1]){
-                        rects[LEFT].push(block_group[idx_group_max_wght].rects[idx_rect]);
+                for(idx_rect = 0, nj = block_group[max_wght_group.idx].rects.length; idx_rect < nj; ++idx_rect){
+                    if(block_group[max_wght_group.idx].rects[idx_rect][0] < max_wght_group.alley[1]){
+                        rects[LEFT].push(block_group[max_wght_group.idx].rects[idx_rect]);
                     }
                     else{
-                        rects[RGHT].push(block_group[idx_group_max_wght].rects[idx_rect]);
+                        rects[RGHT].push(block_group[max_wght_group.idx].rects[idx_rect]);
                     }
                 }
                 --i;
@@ -268,31 +277,32 @@
                 rects[HEAD] = rects[FOOT];
                 rects[FOOT] = [];
             }
-            pla_ctx.doublecolumn_rects = rects;
+            return rects;
+        };
 
-
+        pub.sliceRegionsIntoTextTearingPieces = function(textboxes_by_region, doc_bbox, alley){
             // formatting
             var cut_pts_y = [[],[],[],[]];
             var range_x = [[0, 0],[0, 0],[0, 0],[0, 0]];
 
             for(var i_rgn = 0; i_rgn < 4; ++i_rgn){
-                for( idx_rect = 0; idx_rect < rects[i_rgn].length; ++idx_rect){
-                    cut_pts_y[i_rgn].push(rects[i_rgn][idx_rect][3]);
+                for(var idx_rect = 0; idx_rect < textboxes_by_region[i_rgn].length; ++idx_rect){
+                    cut_pts_y[i_rgn].push(textboxes_by_region[i_rgn][idx_rect][3]);
                 }
             }
 
             // doc_bbox is a bounding box of the document [0, 0, doc_width, doc_height]
             var range_y;
             var alley_x;
-            if(rects[LEFT].length == 0 && rects[RGHT].length == 0) { // no double columns, only header
+            if(textboxes_by_region[LEFT].length == 0 && textboxes_by_region[RGHT].length == 0) { // no double columns, only header
                 range_y = [doc_bbox[3], doc_bbox[3]];
                 alley_x = 0.5*(doc_bbox[0]+doc_bbox[2]);
             }
             else{
-                var left_bbox = Pla.rectUtil.getRectsBBox(rects[LEFT]);
-                var rght_bbox = Pla.rectUtil.getRectsBBox(rects[RGHT]);
+                var left_bbox = Pla.rectUtil.getRectsBBox(textboxes_by_region[LEFT]);
+                var rght_bbox = Pla.rectUtil.getRectsBBox(textboxes_by_region[RGHT]);
                 range_y = [Math.min(left_bbox[1], rght_bbox[1]), Math.max(left_bbox[3], rght_bbox[3])]; // the double column's range
-                alley_x = block_group[idx_group_max_wght].alley_mid;
+                alley_x = 0.5*(alley[0]+alley[1]);
             }
 
             cut_pts_y[HEAD].push(doc_bbox[1]);
@@ -330,217 +340,56 @@
             }
 
             // ttX is text range, ttW is the width of the text region, and rect are actual text boxes.
-            var rtn = [{},{},{},{}];
+            var doublecolumn_text_boxes = [{},{},{},{}];
             for(idx_rgn = 0; idx_rgn < 4; ++idx_rgn){
-                var rgn_bbox = Pla.rectUtil.getRectsBBox(rects[idx_rgn]);
-                rtn[idx_rgn].ttX = rgn_bbox[0];
-                rtn[idx_rgn].ttW = rgn_bbox[2]-rgn_bbox[0];
-                rtn[idx_rgn].rects = [];
+                var rgn_bbox = Pla.rectUtil.getRectsBBox(textboxes_by_region[idx_rgn]);
+                doublecolumn_text_boxes[idx_rgn].ttX = rgn_bbox[0];
+                doublecolumn_text_boxes[idx_rgn].ttW = rgn_bbox[2]-rgn_bbox[0];
+                doublecolumn_text_boxes[idx_rgn].rects = [];
                 for(var j = 0; j < cut_pts_y[idx_rgn].length-1; ++j){
-                    rtn[idx_rgn].rects.push([
+                    doublecolumn_text_boxes[idx_rgn].rects.push([
                         range_x[idx_rgn][0], cut_pts_y[idx_rgn][j], range_x[idx_rgn][1], cut_pts_y[idx_rgn][j+1]
                     ]);
                 }
             }
-            return rtn;
+            return doublecolumn_text_boxes;
         };
+
         return pub;
     })();
 
-
-    Pla.XyCut = (function(){
+    /**
+     * Implementation of recursive XY-Cut algorithm
+     * See "Optimized XY-Cut for Determining a Page Reading Order (Meunier, 1995)"
+     */
+    Pla.xyCut = (function(){
         var pub = {};
 
         var NOSHARE = -1;
 
-        /**
-         * This function gets the projected cuts of the given rectangles. To specify:
-         *      (1) it first project Rects into a 2D (x or y axis specified by cut_y), and get line segments
-         *      (2) and calling 'getCutsOfSegments' merges the segments and inverses it to get 'cuts'.
-         * @param rects
-         * @param range
-         * @param cut_y
-         * @returns {*}
-         */
-        var projectAndCutRects = function(rects, range, cut_y){
-            var i = 0;
-            var j = 2;
-            if(cut_y){
-                i = 1; j = 3;
-            }
-            var segments = [];
-            rects.forEach(function(rect){
-                segments.push([rect[i], rect[j]]);
-            });
-            segments.sort(Pla.rectUtil.segmentSortCriteria);
-            return Pla.rectUtil.getCutsOfSegments(segments, range);
-        };
+        pub.run = function(rects, alley_range){
+            var i, j;
+            var verbose = false;
 
-        pub.projectAndCutRectsX = function(rects, range){
-            var cut_y = false;
-            return projectAndCutRects(rects, range, cut_y);
-        };
-
-        pub.projectAndCutRectsY = function(rects, range){
-            var cut_y = true;
-            return projectAndCutRects(rects, range, cut_y);
-        };
-
-        pub.getYCutBlocks = function(rects, ycuts){
-            //.bbox = [p0x,p0y,p1x,p1y], .rects = [...]
-
-            var cut_ranges = [];
-            for(var i = 0; i < ycuts.length-1; ++i){
-                cut_ranges.push([ycuts[i][1], ycuts[i+1][0]]);
-            }
-
-            var visited = new Array(rects.length);
-            for(var i = 0; i < rects.length; ++i){visited[i] = false;}
-
-            var blocks = [];
-            cut_ranges.forEach(function(cut_range){
-                var block = {};
-                block.rects = [];
-
-                for(var i = 0; i < rects.length; ++i){
-                    if( (!visited[i]) &&
-                        (cut_range[0] <= rects[i][1] && rects[i][3] <= cut_range[1])){
-                        block.rects.push(rects[i]);
-                        visited[i] = true;
-                    }
-                }
-                blocks.push(block);
-            });
-
-            var block;
-            for(var i = 0; block = blocks[i]; ++i){
-                block.rects.sort(Pla.rectUtil.rectSortCriteria);
-                block.bbox = Pla.rectUtil.getRectsBBox(block.rects);
-            }
-            return blocks;
-        };
-
-        var getOptimalGroupSeqs = function(memoization, xcut_seqs){
-            // calcuating optimal sequence
-            function Contains_NOSHARE(l){
-                var item;
-                for(var i = 0; item = l[i]; ++i){
-                    if(item==NOSHARE){
-                        return true;
-                    }
-                }
-                return false;
-            }
-            function Contains_MatchingSeq(seq, prev_seq_l){
-                var prev_seq;
-                for(var i = 0; prev_seq = prev_seq_l[i]; ++i){
-                    if( prev_seq != NOSHARE && prev_seq.equals(seq.slice(0, seq.length-1)) )
-                        return true;
-                }
-                return false;
-
-            }
-            var opt_seq = [];
-            for (var i = 0; i < memoization.length; ++i){
-                opt_seq.push([]);
-            }
-            opt_seq[0].push(NOSHARE);
-            for (var i = 1; i < memoization.length; ++i){
-                var possible_seq = [];
-                var seq_keys = Object.keys(memoization[i]);
-                var seq_key;
-                for (var j = 0; seq_key = seq_keys[j]; ++j){
-                    if(seq_key == NOSHARE){
-                        possible_seq.push(NOSHARE);
-                    }
-                    else{
-                        var seq = xcut_seqs[seq_key].seq;
-                        if(seq.length == 1){
-                            if(Contains_NOSHARE(opt_seq[i-1]))
-                                possible_seq.push(seq);
-                        }
-                        else{
-                            if(Contains_MatchingSeq(seq, opt_seq[i-1]))
-                                possible_seq.push(seq);
-                        }
-                    }
-
-                }
-                var highscore = 0;
-                var seq;
-                for(var j = 0; seq = possible_seq[j]; ++j){
-                    highscore = Math.max(highscore, memoization[i][seq]);
-                }
-
-                if(highscore == 0){
-                    opt_seq[i].push(NOSHARE);
-                }
-                else{
-                    for(var j = 0; seq = possible_seq[j]; ++j){
-                        if(memoization[i][seq] == highscore){
-                            opt_seq[i].push(seq);
-                        }
-                    }
-                }
-            }
-
-            if(false){
-                console.log("=====XYCut.optimal_path.bgn=====");
-                for (var i = 0; i < memoization.length; ++i) {
-                    console.log("Block:", i);
-                    for (var j = 0; seq = opt_seq[i][j]; ++j) {
-                        console.log("    ", JSON.stringify(seq));
-                    }
-                }
-            }
-
-            var seq;
-            var group_seqs = [];
-            for (var i = 0; i < memoization.length; ++i) {
-                if(Contains_NOSHARE(opt_seq[i])){
-                    group_seqs.push([i]);
-                    seq = [];
-                }
-                else{
-                    for(var j = 0; j < opt_seq[i].length; ++j){
-                        if(seq.equals(opt_seq[i][j].slice(0, opt_seq[i][j].length-1))){
-                            group_seqs[group_seqs.length-1].push(i);
-                            seq = opt_seq[i][j];
-                            break;
-                        }
-                    }
-                }
-            }
-            return group_seqs;
-        };
-
-        var getEmptyPageCtx = function(){
-            var ctx  = {};
-            ctx.xcuts = [];
-            ctx.ycut_blocks = [];
-            ctx.alley_range = [0,0];
-            ctx.block_group = [];
-            return ctx;
-        };
-
-        pub.run = function(rects){
-            // data context
-            var rects_bbox = Pla.rectUtil.getRectsBBox(rects);
-            var bbox_h = rects_bbox[3]-rects_bbox[1];
-            var ycuts = pub.projectAndCutRectsY(rects);
-            var ycut_blocks = pub.getYCutBlocks(rects, ycuts); // .bbox = [p0x,p0y,p1x,p1y], .rects = [...]
+            // Project rects on Y axis. When the shadow--line segment--of the projection overlaps, combine them into a block.
+            var ycut_blocks = Pla.rectUtil.getRectBlocksFromProjectedCuts(rects);
             if(ycut_blocks.length == 0){return getEmptyPageCtx();}
-            var memoization = []; // BC(i, X) -> memoization[i][pX], pX points to xcut_seqs
-            for(var i = 0; i < ycut_blocks.length; ++i){
+
+            // X-cuts for each y-cut blocks.
+            var xcuts = [];
+            for( i = 0; i < ycut_blocks.length; ++i){
+                xcuts.push(Pla.rectUtil.projectOnXaxisAndGetCuts(rects = ycut_blocks[i].rects, alley_range));
+            }
+
+            // BC(i, X) -> memoization[i][pX], pX points to xcut_seqs. See the paper for the detail.
+            var memoization = [];
+            for(i = 0; i < ycut_blocks.length; ++i){
                 memoization.push({});
             }
-            var alley_range = Pla.rectUtil.getAlleyRange(rects);
-            var xcuts = []; // xcuts[i] = public.XCut(ycut_blocks[i].rects);
-            var cnstrnt;
-            for(var i = 0; i < ycut_blocks.length; ++i){
-                xcuts.push(pub.projectAndCutRectsX(rects = ycut_blocks[i].rects, cnstrnt = alley_range));
-            }
+
             var xcut_seqs = {}; // xcut_seqs["2,0,3,0,4,0"] = [{seq:[[2,0],[3,0],[4,0]], xcut: [-infinity, 132.0]}]
+
+            var bbox_height = Pla.rectUtil.getRectsBBoxHeight(rects);
 
             // BC internal functions
             var BC_CascadeXCut = function(seq){
@@ -552,7 +401,9 @@
                         v.xcut = xcuts[seq[0][0]][seq[0][1]];
                     }
                     else{
-                        v.xcut = Pla.rectUtil.intersectSegment(xcuts[seq[seq.length-1][0]][seq[seq.length-1][1]], BC_CascadeXCut(seq.slice(0, seq.length-1)));
+                        v.xcut = Pla.rectUtil.intersectSegment(
+                            xcuts[seq[seq.length-1][0]][seq[seq.length-1][1]], BC_CascadeXCut(seq.slice(0, seq.length-1))
+                        );
                     }
                     xcut_seqs[seq] = v;
                 }
@@ -584,14 +435,23 @@
                 return l[0];
             };
 
+            /**
+             * @returns {number}
+             */
             var BC_Height = function(i){
                 return ycut_blocks[i].bbox[3]-ycut_blocks[i].bbox[1];
             };
 
+            /**
+             * @returns {number}
+             */
             var BC_Dist = function(ia, ib){
                 return ycut_blocks[ib].bbox[1] - ycut_blocks[ia].bbox[3];
             };
 
+            /**
+             * @returns {number} - score (to maximize)
+             */
             var BC = function(i, pX){
                 if(i >= ycut_blocks.length){return 0;}
                 if(memoization[i].hasOwnProperty(pX)){return memoization[i][pX];}
@@ -622,10 +482,10 @@
                         }
                         else{
                             score = BC(i+1, NOSHARE);
-                            for(var j = 0; j < overlap_list.length; ++j) {
+                            for( j = 0; j < overlap_list.length; ++j) {
                                 score = Math.max(score, BC(i+1, pX.concat([[i, overlap_list[j]]])));
                             }
-                            score += bbox_h-BC_Dist(i-1, i) + BC_Height(i); // share_score
+                            score += bbox_height-BC_Dist(i-1, i) + BC_Height(i); // share_score
                         }
                     }
                 }
@@ -636,13 +496,13 @@
             // run xy-cut
             BC(0, NOSHARE);
 
-            if(false){
+            if(verbose){
                 console.log("=====XYCut.memoization.bgn=====");
                 for (var bKey in memoization) {
                     if (memoization.hasOwnProperty(bKey)) {
                         console.log("Block:", bKey);
                         var pKeys = Object.keys(memoization[bKey]);
-                        for (var i = 0; i < pKeys.length; ++i) {
+                        for ( i = 0; i < pKeys.length; ++i) {
                             if (memoization[bKey].hasOwnProperty(pKeys[i])) {
                                 console.log("    ", memoization[bKey][pKeys[i]].toFixed(2), "    ", pKeys[i] == -1 ? "NOSHARE" : JSON.stringify(xcut_seqs[pKeys[i]].seq), pKeys[i] == -1 ? " " : JSON.stringify(xcut_seqs[pKeys[i]].xcut));
                             }
@@ -653,18 +513,18 @@
 
             // optimal sequence
             var group_seqs = getOptimalGroupSeqs(memoization, xcut_seqs);
-            if(false){
+            if(verbose){
                 console.log("=====XYCut.group_seqs.bgn=====");
                 console.log(JSON.stringify(group_seqs));
             }
 
             var block_group = [];
             var group_seq;
-            for(var i = 0; group_seq = group_seqs[i]; ++i){
+            for( i = 0; group_seq = group_seqs[i]; ++i){
                 var grp = {};
                 grp.seq = group_seq;
                 grp.rects = [];
-                for(var j = 0; j < group_seq.length; ++j){
+                for( j = 0; j < group_seq.length; ++j){
                     var rect;
                     for(var k = 0; rect = ycut_blocks[group_seq[j]].rects[k]; ++k){
                         grp.rects.push(rect);
@@ -677,11 +537,127 @@
             var ctx  = {};
             ctx.xcuts = xcuts;
             ctx.ycut_blocks = ycut_blocks;
-            ctx.alley_range = alley_range;
             ctx.block_group = block_group;
 
             return ctx;
         };
+
+        /**
+         * calcuating optimal sequence
+         * @param memoization
+         * @param xcut_seqs
+         * @returns {Array}
+         */
+        var getOptimalGroupSeqs = function(memoization, xcut_seqs){
+            var verbose = false;
+            var i, j, seq;
+            /**
+             * @returns {boolean}
+             */
+            function Contains_NOSHARE(l){
+                var item;
+                for(var i = 0; item = l[i]; ++i){
+                    if(item==NOSHARE){
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            /**
+             * @returns {boolean}
+             */
+            function Contains_MatchingSeq(seq, prev_seq_l){
+                var prev_seq;
+                for(var i = 0; prev_seq = prev_seq_l[i]; ++i){
+                    if( prev_seq != NOSHARE && prev_seq.equals(seq.slice(0, seq.length-1)) )
+                        return true;
+                }
+                return false;
+
+            }
+
+            var opt_seq = [];
+            for ( i = 0; i < memoization.length; ++i){
+                opt_seq.push([]);
+            }
+            opt_seq[0].push(NOSHARE);
+            for ( i = 1; i < memoization.length; ++i){
+                var possible_seq = [];
+                var seq_keys = Object.keys(memoization[i]);
+                var seq_key;
+                for ( j = 0; seq_key = seq_keys[j]; ++j){
+                    if(seq_key == NOSHARE){
+                        possible_seq.push(NOSHARE);
+                    }
+                    else{
+                        seq = xcut_seqs[seq_key].seq;
+                        if(seq.length == 1){
+                            if(Contains_NOSHARE(opt_seq[i-1]))
+                                possible_seq.push(seq);
+                        }
+                        else{
+                            if(Contains_MatchingSeq(seq, opt_seq[i-1]))
+                                possible_seq.push(seq);
+                        }
+                    }
+
+                }
+                var highscore = 0;
+                for( j = 0; seq = possible_seq[j]; ++j){
+                    highscore = Math.max(highscore, memoization[i][seq]);
+                }
+
+                if(highscore == 0){
+                    opt_seq[i].push(NOSHARE);
+                }
+                else{
+                    for( j = 0; seq = possible_seq[j]; ++j){
+                        if(memoization[i][seq] == highscore){
+                            opt_seq[i].push(seq);
+                        }
+                    }
+                }
+            }
+
+            if(verbose){
+                console.log("=====XYCut.optimal_path.bgn=====");
+                for ( i = 0; i < memoization.length; ++i) {
+                    console.log("Block:", i);
+                    for ( j = 0; seq = opt_seq[i][j]; ++j) {
+                        console.log("    ", JSON.stringify(seq));
+                    }
+                }
+            }
+
+
+            var group_seqs = [];
+            for ( i = 0; i < memoization.length; ++i) {
+                if(Contains_NOSHARE(opt_seq[i])){
+                    group_seqs.push([i]);
+                    seq = [];
+                }
+                else{
+                    for( j = 0; j < opt_seq[i].length; ++j){
+                        if(seq.equals(opt_seq[i][j].slice(0, opt_seq[i][j].length-1))){
+                            group_seqs[group_seqs.length-1].push(i);
+                            seq = opt_seq[i][j];
+                            break;
+                        }
+                    }
+                }
+            }
+            return group_seqs;
+        };
+
+        var getEmptyPageCtx = function(){
+            var ctx  = {};
+            ctx.xcuts = [];
+            ctx.ycut_blocks = [];
+            ctx.block_group = [];
+            return ctx;
+        };
+
 
         return pub;
     })();
@@ -804,6 +780,15 @@
             return bbox;
         };
 
+        /**
+         * Get Height of the given rectangles' bounding box
+         * @param rects
+         * @returns {number}
+         */
+        pub.getRectsBBoxHeight = function(rects){
+            var bbox = Pla.rectUtil.getRectsBBox(rects);
+            return bbox[3]-bbox[1];
+        };
 
         /**
          * Returns potential x range of the alley. Here, the alley means the horizontal gap within the double column.
@@ -904,7 +889,11 @@
             return rtn;
         };
 
-
+        /**
+         * Merges points within the tolerance distance
+         * @param pts
+         * @param tolerance
+         */
         pub.mergeOverlappingPts = function(pts, tolerance){
             // assert that l was sorted
             for(var i = 0; i < pts.length-1; ++i){
@@ -917,6 +906,72 @@
 
         pub.copyRect = function(r){
             return [r[0],r[1],r[2],r[3]];
+        };
+
+        /**
+         * This function gets the projected cuts of the given rectangles. To specify:
+         *      (1) it first project Rects into a 2D (x or y axis specified by cut_y), and get line segments
+         *      (2) and calling 'getCutsOfSegments' merges the segments and inverses it to get 'cuts'.
+         * @param rects
+         * @param range
+         * @param cut_y
+         * @returns {*}
+         */
+        var projectAndCutRects = function(rects, range, cut_y){
+            var i = 0;
+            var j = 2;
+            if(cut_y){
+                i = 1; j = 3;
+            }
+            var segments = [];
+            rects.forEach(function(rect){
+                segments.push([rect[i], rect[j]]);
+            });
+            segments.sort(Pla.rectUtil.segmentSortCriteria);
+            return Pla.rectUtil.getCutsOfSegments(segments, range);
+        };
+
+        pub.projectOnXaxisAndGetCuts = function(rects, range){
+            var cut_y = false;
+            return projectAndCutRects(rects, range, cut_y);
+        };
+
+        pub.projectOnYaxisAndGetCuts = function(rects, range){
+            var cut_y = true;
+            return projectAndCutRects(rects, range, cut_y);
+        };
+
+        /**
+         *
+         * @param rects
+         * @returns {Array}
+         */
+        pub.getRectBlocksFromProjectedCuts = function(rects){
+            var i, j;
+            var blocks = [];
+            var ycuts = pub.projectOnYaxisAndGetCuts(rects);
+
+            var visited_rect = new Array(rects.length);
+            for(j = 0; j < rects.length; ++j){visited_rect[j] = false;}
+            for(i = 0; i < ycuts.length-1; ++i){
+                var cut_range = [ycuts[i][1], ycuts[i+1][0]];
+                var block = {};
+                block.rects = [];
+
+                for(j = 0; j < rects.length; ++j){
+                    if( (!visited_rect[j]) &&
+                        (cut_range[0] <= rects[j][1] && rects[j][3] <= cut_range[1])){
+                        block.rects.push(rects[j]);
+                        visited_rect[j] = true;
+                    }
+                }
+
+                block.rects.sort(Pla.rectUtil.rectSortCriteria);
+                block.bbox = Pla.rectUtil.getRectsBBox(block.rects);
+                blocks.push(block);
+            }
+
+            return blocks;
         };
 
         return pub;

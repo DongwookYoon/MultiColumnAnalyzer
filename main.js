@@ -28,7 +28,7 @@
         var num_pages = 0;
         var page_data = [];
         var page_datum = {};
-        var _mupladoc = [];
+        var mupla_data = [];
 
         pub.getNumPages = function(){return num_pages;};
 
@@ -48,14 +48,14 @@
                             //ToDo replace it with Pla.ctx
                         ).then(
                             function(js){
-                                _mupladoc = _mupladoc.concat(JSON.parse(js));
+                                mupla_data = mupla_data.concat(JSON.parse(js));
                                 job(n+1);
                             }
                         ).catch(reject);
                     }
                     else{
-                        for(var i = 0; i < _mupladoc.length; ++i){
-                            _mupladoc[i].GetRects = function(){
+                        for(var i = 0; i < mupla_data.length; ++i){
+                            mupla_data[i].GetRects = function(){
                                 var rects = [];
                                 for(var i = 0; i < this.tblocks.length; ++i){
                                     var lines = this.tblocks[i].lines;
@@ -135,25 +135,15 @@
                         page_datum = {};
                         page_datum.img_boxes = [];
                         page_datum.canvas = canv;
-                        page_datum.mupla = _mupladoc[n];
+                        page_datum.mupla_data = mupla_data[n];
+                        page_datum.n_page = n;
+                        page_datum.n_page_total = page_data.length;
+                        page_data[n] = page_datum;
                         page.render({
                             canvasContext: canv_ctx,
                             viewport: viewport
                         }).then(function(){
-                            var $text_layer = jQuery("<div />")
-                                .addClass("textLayer")
-                                .css("height", viewport.height + "px")
-                                .css("width", viewport.width + "px")
-                                .offset({
-                                    top: 0,
-                                    left: 0
-                                });
-                            page.getTextContent().then(function(tc){
-                                page_datum.n_page = n;
-                                page_datum.n_page_total = page_data.length;
-                                page_data[n] = page_datum;
-                                resolve(page_data[n]);
-                            });
+                            resolve(page_data[n]);
                         });
                     }).catch(reject);
                 }
@@ -194,8 +184,9 @@
             document.onkeydown = onKeyDown;
             document.onmouseup = onMouseUp;
 
-            render_ctx.scrx = $("#maincanvas").width();
-            render_ctx.scry = $("#maincanvas").height();
+            var $maincanvas = $("#maincanvas");
+            render_ctx.scrx = $maincanvas.width();
+            render_ctx.scry = $maincanvas.height();
 
             //Todo replace this with Pla.ctx
             var myuuid = Pla.util.GetParameterByName("uuid");
@@ -204,9 +195,9 @@
             var pdf_filename = "merged.pdf";
             Pla.View.Init(render_ctx);
 
-            var prom = Pla.model.Init(pdf_path, pdf_filename, nfiles)
+            var promise = Pla.model.Init(pdf_path, pdf_filename, nfiles);
             page_layout_js = new Array(Pla.model.getNumPages());
-            return prom;
+            return promise;
         };
 
         var batchRunPla = function(){
@@ -263,36 +254,56 @@
             return Pla.model.getPdfPageData(cur_page).then(function(page){
                 console.log("> runPla at page", cur_page);
                 preprocessTextBoxes(
-                    page.mupla,
+                    page.mupla_data,
                     {w: page.canvas.width, h: page.canvas.height}
                 );
 
-                var rects = page.mupla.GetRects();
+                var rects = page.mupla_data.GetRects();
+
+                var alley_range = Pla.rectUtil.getAlleyRange(rects);
+
+                render_ctx.pla_ctx = Pla.xyCut.run(rects, alley_range);
+
+                var max_wght_group = Pla.multiColumn.runHistogramAnalysis(
+                    render_ctx.pla_ctx.block_group, alley_range
+                );
+
+                var textboxes_by_regions = Pla.multiColumn.categorizeTextBoxesIntoRegions(
+                    render_ctx.pla_ctx.block_group, max_wght_group
+                );
+
+                var texttearing_pieces = Pla.multiColumn.sliceRegionsIntoTextTearingPieces(
+                    textboxes_by_regions,
+                    page.mupla_data.bbox,
+                    max_wght_group.alley
+                );
 
                 render_ctx.rects = rects;
-                render_ctx.ycuts = Pla.XyCut.projectAndCutRectsY(rects);
-                render_ctx.ycut_blocks = Pla.XyCut.getYCutBlocks(rects, render_ctx.ycuts);
-                render_ctx.pla_ctx = Pla.XyCut.run(rects);
-                render_ctx.multicolumn = Pla.multiColumn.run(render_ctx.pla_ctx, page.mupla.bbox);
-                page_layout_js[cur_page] = {
-                    bbox: page.mupla.bbox,
-                    rgns: render_ctx.multicolumn};
-
+                render_ctx.alley_range = alley_range;
+                render_ctx.ycuts = Pla.rectUtil.projectOnYaxisAndGetCuts(rects);
+                render_ctx.ycut_blocks = Pla.rectUtil.getRectBlocksFromProjectedCuts(rects);
+                render_ctx.pla_ctx.doublecolumn_rects = textboxes_by_regions;
+                render_ctx.multicolumn = texttearing_pieces;
                 render_ctx.n_page = page.n_page;
                 render_ctx.n_page_total = page.n_page_total;
 
                 Pla.View.Render(render_ctx, page.canvas);
+
+                page_layout_js[cur_page] = {
+                    bbox: page.mupla_data.bbox,
+                    rgns: texttearing_pieces};
             }).catch(Pla.util.handleErr);
         };
 
         var preprocessTextBoxes = function(mupla, canvas_size){
+            var i, j, lines, bbox;
             if(typeof mupla.resize_done === "undefined"){
                 var ratio_x = canvas_size.w/(mupla.bbox[2]-mupla.bbox[0]);
                 var ratio_y = canvas_size.h/(mupla.bbox[3]-mupla.bbox[1]);
-                for(var i = 0; i < mupla.tblocks.length; ++i){
-                    var lines = mupla.tblocks[i].lines;
-                    for(var j = 0; j < lines.length; ++j){
-                        var bbox = lines[j].bbox;
+                for( i = 0; i < mupla.tblocks.length; ++i){
+                    lines = mupla.tblocks[i].lines;
+                    for( j = 0; j < lines.length; ++j){
+                        bbox = lines[j].bbox;
                         bbox[0] = ratio_x*bbox[0];
                         bbox[1] = ratio_y*bbox[1];
                         bbox[2] = ratio_x*bbox[2];
@@ -318,9 +329,9 @@
 
 
             // filter out space only text boxes
-            for(var i = 0; i < mupla.tblocks.length; ++i){
-                var lines = mupla.tblocks[i].lines;
-                for(var j = 0; j < lines.length; ++j){
+            for(i = 0; i < mupla.tblocks.length; ++i){
+                lines = mupla.tblocks[i].lines;
+                for(j = 0; j < lines.length; ++j){
                     if((/^\s*$/).test(lines[j].text) || !isMostlyAlphaNumeric(lines[j].text)){
                         lines.splice(j, 1);
                         --j;
@@ -330,12 +341,12 @@
 
             // filter out Page Number box
             var rects = mupla.GetRects();
-            var bbox = Pla.rectUtil.getRectsBBox(rects);
+            bbox = Pla.rectUtil.getRectsBBox(rects);
             var range_y = [bbox[3]-Pla.Param.PAGENUM_DETECTION_RANGE_Y, bbox[3]];
 
-            for(var i = 0; i < mupla.tblocks.length; ++i) {
-                var lines = mupla.tblocks[i].lines;
-                for (var j = 0; j < lines.length; ++j) {
+            for(i = 0; i < mupla.tblocks.length; ++i) {
+                lines = mupla.tblocks[i].lines;
+                for (j = 0; j < lines.length; ++j) {
                     var rect = lines[j].bbox;
                     if((/^([0-9]|\s)+$/).test(lines[j].text) && // number only text
                         Pla.rectUtil.testOverlapSegments(range_y, [rect[1], rect[3]])
@@ -411,6 +422,15 @@
         };
 
         pub.Render = function(render_ctx, canvas){
+            var i, j, h;
+            var display = {
+                ycut_blocks: false,
+                textbox_by_regions: true,
+                block_group_bbox: true,
+                histogram: true,
+                texttearing_pieces: false
+            };
+
             dr_ctx.fillStyle = 'lightgray';
             dr_ctx.fillRect(0, 0, render_ctx.scrx, render_ctx.scry);
 
@@ -427,7 +447,7 @@
             var rects = render_ctx.rects;
             rects.forEach(function(rect){
                 dr_ctx.strokeStyle = 'rgba(0, 0, 255, 0.5)';
-                dr_ctx.lineWidth="1";
+                dr_ctx.lineWidth = 1;
                 dr_ctx.beginPath();
                 dr_ctx.rect(rect[0], rect[1], rect[2]-rect[0], rect[3]-rect[1]);
                 dr_ctx.stroke();
@@ -437,7 +457,7 @@
             var x = 2;
             ycuts.forEach(function(yi){
                 dr_ctx.strokeStyle = 'rgba(255, 0, 0, 1.0)';
-                dr_ctx.lineWidth="3";
+                dr_ctx.lineWidth = 3;
                 dr_ctx.beginPath();
                 dr_ctx.moveTo(x, yi[0]);
                 dr_ctx.lineTo(x, yi[1]);
@@ -445,12 +465,12 @@
                 x += 2;
             });
 
-            if(false){
+            if(display.ycut_blocks){
                 var ycut_blocks = render_ctx.ycut_blocks;
                 ycut_blocks.forEach(function(ycut_block){
                     var block = ycut_block.bbox;
                     dr_ctx.strokeStyle = 'rgba(0, 0, 255, 0.5)';
-                    dr_ctx.lineWidth="2";
+                    dr_ctx.lineWidth = 2;
                     dr_ctx.beginPath();
                     dr_ctx.rect(block[0], block[1], block[2]-block[0], block[3]-block[1]);
                     dr_ctx.stroke();
@@ -460,7 +480,7 @@
 
 
             var pla_ctx = render_ctx.pla_ctx;
-            for(var i = 0; i < pla_ctx.xcuts.length; ++i){
+            for(i = 0; i < pla_ctx.xcuts.length; ++i){
                 pla_ctx.xcuts[i].forEach(function(cut){
                     dr_ctx.fillStyle = 'rgba(0, 255, 255, 0.25)';
                     dr_ctx.fillRect(
@@ -474,16 +494,16 @@
 
             // alley constraint lines
             dr_ctx.strokeStyle = 'rgba(50, 50, 50, 0.1)';
-            dr_ctx.lineWidth="2";
+            dr_ctx.lineWidth = 2;
             dr_ctx.beginPath();
-            dr_ctx.moveTo(pla_ctx.alley_range[0], 0);
-            dr_ctx.lineTo(pla_ctx.alley_range[0], canvas.height);
-            dr_ctx.moveTo(pla_ctx.alley_range[1], 0);
-            dr_ctx.lineTo(pla_ctx.alley_range[1], canvas.height);
+            dr_ctx.moveTo(render_ctx.alley_range[0], 0);
+            dr_ctx.lineTo(render_ctx.alley_range[0], canvas.height);
+            dr_ctx.moveTo(render_ctx.alley_range[1], 0);
+            dr_ctx.lineTo(render_ctx.alley_range[1], canvas.height);
             dr_ctx.stroke();
 
 
-            if(true){ // color boxes differently
+            if(display.textbox_by_regions){ // color boxes differently
                 var COLORS = [
                     "rgba(255, 0, 0, 0.25)",
                     "rgba(0, 255, 0, 0.25)",
@@ -493,7 +513,7 @@
 
                 for(var i_rgn = 0; i_rgn < 4; ++i_rgn){
                     dr_ctx.fillStyle = COLORS[i_rgn];
-                    for(var i = 0; i < pla_ctx.doublecolumn_rects[i_rgn].length; ++i){
+                    for(i = 0; i < pla_ctx.doublecolumn_rects[i_rgn].length; ++i){
                         var rect = pla_ctx.doublecolumn_rects[i_rgn][i];
                         dr_ctx.fillRect(
                             rect[0],
@@ -507,12 +527,12 @@
 
 
             var bgrp;
-            for(var i = 0; bgrp = pla_ctx.block_group[i]; ++i){
+            for(i = 0; bgrp = pla_ctx.block_group[i]; ++i){
                 // block group bbox
-                if(true){
+                if(display.block_group_bbox){
                     var block = bgrp.bbox;
                     dr_ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
-                    dr_ctx.lineWidth="3";
+                    dr_ctx.lineWidth = 3;
                     dr_ctx.beginPath();
                     dr_ctx.rect(block[0], block[1], block[2]-block[0], block[3]-block[1]);
                     dr_ctx.stroke();
@@ -528,9 +548,9 @@
                 }
 
 
-                if(true) { // histogram analysis
+                if(display.histogram) { // histogram analysis
                     dr_ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
-                    for (var j = 1; j < bgrp.histogram_left.data.length - 2; ++j) {
+                    for (j = 1; j < bgrp.histogram_left.data.length - 2; ++j) {
                         dr_ctx.fillRect(
                             bgrp.histogram_left.data[j].p,
                             block[3],
@@ -540,18 +560,19 @@
                     }
                     if (bgrp.histogram_left.data.length > 2) {
                         dr_ctx.strokeStyle = 'rgba(0, 255, 0, 1.0)';
-                        dr_ctx.lineWidth = "2";
-                        var h = block[3] - bgrp.histogram_left.cut_threshold / 2;
+                        dr_ctx.lineWidth = 2;
+                        h = block[3] - bgrp.histogram_left.cut_threshold / 2;
                         dr_ctx.beginPath();
                         dr_ctx.moveTo(block[0] - 50, h);
                         dr_ctx.lineTo(block[2] + 50, h);
                         dr_ctx.stroke();
                     }
 
-                    for (var j = 0; j < bgrp.histogram_left.thresholded_block.length; ++j) {
-                        var threshold_block = bgrp.histogram_left.thresholded_block[j];
+                    var threshold_block;
+                    for (j = 0; j < bgrp.histogram_left.thresholded_block.length; ++j) {
+                        threshold_block = bgrp.histogram_left.thresholded_block[j];
                         dr_ctx.strokeStyle = 'rgba(0, 150, 150, 1.0)';
-                        dr_ctx.lineWidth = "2";
+                        dr_ctx.lineWidth = 2;
                         dr_ctx.beginPath();
                         dr_ctx.rect(
                             threshold_block.range[0],
@@ -563,7 +584,7 @@
                     }
 
 
-                    for (var j = 1; j < bgrp.histogram_rght.data.length - 2; ++j) {
+                    for (j = 1; j < bgrp.histogram_rght.data.length - 2; ++j) {
                         dr_ctx.fillRect(
                             bgrp.histogram_rght.data[j].p,
                             block[1],
@@ -573,17 +594,17 @@
                     }
                     if (bgrp.histogram_rght.data.length > 2) {
                         dr_ctx.strokeStyle = 'rgba(0, 255, 0, 1.0)';
-                        dr_ctx.lineWidth = "2";
-                        var h = block[1] + bgrp.histogram_rght.cut_threshold / 2;
+                        dr_ctx.lineWidth = 2;
+                        h = block[1] + bgrp.histogram_rght.cut_threshold / 2;
                         dr_ctx.beginPath();
                         dr_ctx.moveTo(block[0] - 50, h);
                         dr_ctx.lineTo(block[2] + 50, h);
                         dr_ctx.stroke();
                     }
-                    for (var j = 0; j < bgrp.histogram_rght.thresholded_block.length; ++j) {
-                        var threshold_block = bgrp.histogram_rght.thresholded_block[j];
+                    for (j = 0; j < bgrp.histogram_rght.thresholded_block.length; ++j) {
+                        threshold_block = bgrp.histogram_rght.thresholded_block[j];
                         dr_ctx.strokeStyle = 'rgba(0, 150, 150, 1.0)';
-                        dr_ctx.lineWidth = "2";
+                        dr_ctx.lineWidth = 2;
                         dr_ctx.beginPath();
                         dr_ctx.rect(
                             threshold_block.range[0],
@@ -596,9 +617,9 @@
                 }
             }
 
-            if(false){ // final cutting boxes
+            if(display.texttearing_pieces){ // final cutting boxes
                 for(var idx_rgn = 0; idx_rgn < 4; ++idx_rgn){
-                    for(var i = 0; i < render_ctx.multicolumn[idx_rgn].rects.length; ++i){
+                    for(i = 0; i < render_ctx.multicolumn[idx_rgn].rects.length; ++i){
                         var box = render_ctx.multicolumn[idx_rgn].rects[i];
                         if(i%2==0){
                             dr_ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
@@ -606,7 +627,7 @@
                         else{
                             dr_ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
                         }
-                        dr_ctx.lineWidth="1";
+                        dr_ctx.lineWidth = 1;
                         dr_ctx.beginPath();
                         dr_ctx.rect(
                             box[0],
