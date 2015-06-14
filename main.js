@@ -21,138 +21,10 @@
         MULTICOLUMN_MERGE_Y: 3
     };
 
-    Pla.model = (function(){
-        var pub = {};
-
-        var pdf;
-        var num_pages = 0;
-        var page_data = [];
-        var page_datum = {};
-        var mupla_data = [];
-
-        pub.getNumPages = function(){return num_pages;};
-
-        pub.Init = function(pdf_path, pdf_filename, nfiles){
-            return getMuPlaJs(pdf_path, pdf_filename, nfiles).then(
-                getPdf
-            );
-        };
-
-        function getMuPlaJs(pdf_path, pdf_filename, nfiles){
-            return new Promise(function(resolve, reject){
-                function job(n){
-                    if(n != nfiles){
-                        Pla.util.getUrlData(
-                            pdf_path+n+".pdf.js",
-                            ""
-                            //ToDo replace it with Pla.ctx
-                        ).then(
-                            function(js){
-                                mupla_data = mupla_data.concat(JSON.parse(js));
-                                job(n+1);
-                            }
-                        ).catch(reject);
-                    }
-                    else{
-                        for(var i = 0; i < mupla_data.length; ++i){
-                            mupla_data[i].GetRects = function(){
-                                var rects = [];
-                                for(var i = 0; i < this.tblocks.length; ++i){
-                                    var lines = this.tblocks[i].lines;
-                                    for(var j = 0; j < lines.length; ++j){
-                                        rects.push(lines[j].bbox);
-                                    }
-                                }
-                                return rects;
-                            };
-                        }
-                        resolve(pdf_path+pdf_filename);
-                    }
-                }
-                job(0);
-            });
-        }
-
-        function getPdf(path){
-            return Pla.util.getUrlData(
-                path,
-                "arraybuffer",
-                null
-            ).then(
-                PDFJS.getDocument
-            ).then(
-                function(_pdf){ // cb_success
-                    pdf = _pdf;
-                    num_pages = pdf.pdfInfo.numPages;
-                    for(var i = 0; i < num_pages; ++i){
-                        page_data.push(null);
-                    }
-                    console.log("Model.Init:", num_pages, "pages");
-                }
-            //).then(
-            //    populatePdfPageData
-            );
-        }
-
-        function populatePdfPageData(){
-            return new Promise(function(resolve, reject){
-                var job = function(n){
-                    if(n != num_pages){
-                        pub.getPdfPageData(n).then(function(){
-                            job(n+1);
-                        }).catch(reject);
-                    }
-                    else{
-                        resolve();
-                    }
-                };
-                job(0);
-            });
-        }
-
-        /** called in the pdf.js */
-        pub.addImgRect = function(rect){
-            page_datum.img_boxes.push(rect);
-        };
-
-        pub.getPdfPageData = function(n){
-            return new Promise(function(resolve, reject){
-                if(page_data[n]){
-                    resolve(page_data[n]);
-                }
-                else{
-                    pdf.getPage(n+1).then(function(page){
-                        var s = Pla.Param.PAGE_W / (page.pageInfo.view[2]); // set page width
-                        var viewport = page.getViewport(s);
-                        var canv = document.createElement('canvas');
-                        var canv_ctx = canv.getContext('2d');
-                        var canv_pixel_ratio = Pla.util.getOutputScale(canv_ctx);
-
-                        canv.width = Math.floor(viewport.width*canv_pixel_ratio.sx) | 0;
-                        canv.height = Math.floor(viewport.height*canv_pixel_ratio.sy) | 0;
-                        canv_ctx.scale(canv_pixel_ratio.sx, canv_pixel_ratio.sy);
-
-                        page_datum = {};
-                        page_datum.img_boxes = [];
-                        page_datum.canvas = canv;
-                        page_datum.mupla_data = mupla_data[n];
-                        page_datum.n_page = n;
-                        page_datum.n_page_total = page_data.length;
-                        page_data[n] = page_datum;
-                        page.render({
-                            canvasContext: canv_ctx,
-                            viewport: viewport
-                        }).then(function(){
-                            resolve(page_data[n]);
-                        });
-                    }).catch(reject);
-                }
-            });
-
-        };
-
-        return pub;
-    })();
+    Pla.Const = {
+        PDF_FILENAME: "merged.pdf",
+        MUPLA_FILENAME: "merged.js"
+    };
 
     Pla.ctrl = (function(){
         var pub = {};
@@ -162,13 +34,8 @@
         var page_layout_js = [];
 
         pub.start = function(){
-            /*
-             init().then(
-             runPLA
-             ).catch(HandleErr);*/
-
             return Pla.util.checkEnv().then(
-                init
+                initCtrl
             ).then(
                 batchRunPla
             ).then(
@@ -180,7 +47,7 @@
             ).catch(Pla.util.handleErr);
         };
 
-        var init = function(){
+        var initCtrl = function(){
             document.onkeydown = onKeyDown;
             document.onmouseup = onMouseUp;
 
@@ -188,14 +55,15 @@
             render_ctx.scrx = $maincanvas.width();
             render_ctx.scry = $maincanvas.height();
 
-            //Todo replace this with Pla.ctx
-            var myuuid = Pla.util.GetParameterByName("uuid");
-            var nfiles = Pla.util.GetParameterByName("nfiles");
-            var pdf_path = Pla.util.GetServerUrl()+"mupla_pdfs/"+myuuid+"/";
-            var pdf_filename = "merged.pdf";
-            Pla.View.Init(render_ctx);
+            Pla.ctx = {
+                mupla_pdfs_folder_path: Pla.util.GetServerUrl()+"mupla_pdfs/"+Pla.util.GetParameterByName("uuid")+"/",
+                err_redirect_url: Pla.util.GetServerUrl() + "upload",
+                doc_layout_upload_url: Pla.util.GetServerUrl()+"upload?mode=UploadDocLayout&uuid="+Pla.util.GetParameterByName("uuid")
+            };
 
-            var promise = Pla.model.Init(pdf_path, pdf_filename, nfiles);
+            Pla.View.initView(render_ctx);
+
+            var promise = Pla.model.initModel(Pla.ctx.mupla_pdfs_folder_path);
             page_layout_js = new Array(Pla.model.getNumPages());
             return promise;
         };
@@ -233,7 +101,7 @@
 
                     var posting = $.ajax({
                         type: 'POST',
-                        url: Pla.util.GetServerUrl()+"upload?mode=UploadDocLayout&uuid="+Pla.util.GetParameterByName("uuid"),
+                        url: Pla.ctx.doc_layout_upload_url,
                         data: JSON.stringify(doc_layout_js),
                         contentType:"application/jsonrequest"
                     });
@@ -393,19 +261,145 @@
             Pla.model.getPdfPageData(cur_page).then(function(page){
                 // Todo Fix it
                 /*
-                page.text_boxes.forEach(function(item){
-                    var rect = item.bbox;
-                    if(rect[0] < p[0] && p[0] < rect[2] &&
-                        rect[1] < p[1] && p[1] < rect[3]
-                    ){
-                        console.log(
-                            "mouse_pos:", JSON.stringify(p), ",",
-                            rect[0].toFixed(2), rect[1].toFixed(2), rect[2].toFixed(2), rect[3].toFixed(2), ",",
-                            item.text
-                        );
-                    }
-                });*/
+                 page.text_boxes.forEach(function(item){
+                 var rect = item.bbox;
+                 if(rect[0] < p[0] && p[0] < rect[2] &&
+                 rect[1] < p[1] && p[1] < rect[3]
+                 ){
+                 console.log(
+                 "mouse_pos:", JSON.stringify(p), ",",
+                 rect[0].toFixed(2), rect[1].toFixed(2), rect[2].toFixed(2), rect[3].toFixed(2), ",",
+                 item.text
+                 );
+                 }
+                 });*/
             }).catch(Pla.util.handleErr);
+        };
+
+        return pub;
+    })();
+
+    Pla.model = (function(){
+        var pub = {};
+
+        var pdf;
+        var num_pages = 0;
+        var page_data = [];
+        var page_datum = {};
+        var mupla_data = [];
+
+        pub.getNumPages = function(){return num_pages;};
+
+        pub.initModel = function(dir_path){
+            return getMuPlaJs(dir_path).then(
+                getPdf
+            );
+        };
+
+        function getMuPlaJs(dir_path){
+            return new Promise(function(resolve, reject){
+                Pla.util.getUrlData(
+                    dir_path+Pla.Const.MUPLA_FILENAME,
+                    ""
+                ).then(
+                    function(js){
+                        mupla_data = JSON.parse(js);
+                        for(var i = 0; i < mupla_data.length; ++i){
+                            mupla_data[i].GetRects = function(){
+                                var rects = [];
+                                for(var i = 0; i < this.tblocks.length; ++i){
+                                    var lines = this.tblocks[i].lines;
+                                    for(var j = 0; j < lines.length; ++j){
+                                        rects.push(lines[j].bbox);
+                                    }
+                                }
+                                return rects;
+                            };
+                        }
+                        resolve(dir_path+Pla.Const.PDF_FILENAME);
+                    }
+                ).catch(
+                    reject
+                );
+            });
+        }
+
+        function getPdf(pdf_filepath){
+            return Pla.util.getUrlData(
+                pdf_filepath,
+                "arraybuffer",
+                null
+            ).then(
+                PDFJS.getDocument
+            ).then(
+                function(_pdf){ // cb_success
+                    pdf = _pdf;
+                    num_pages = pdf.pdfInfo.numPages;
+                    for(var i = 0; i < num_pages; ++i){
+                        page_data.push(null);
+                    }
+                    console.log("Model.Init:", num_pages, "pages");
+                }
+            //).then(
+            //    populatePdfPageData
+            );
+        }
+
+        function populatePdfPageData(){
+            return new Promise(function(resolve, reject){
+                var job = function(n){
+                    if(n != num_pages){
+                        pub.getPdfPageData(n).then(function(){
+                            job(n+1);
+                        }).catch(reject);
+                    }
+                    else{
+                        resolve();
+                    }
+                };
+                job(0);
+            });
+        }
+
+        /** called in the pdf.js */
+        pub.addImgRect = function(rect){
+            page_datum.img_boxes.push(rect);
+        };
+
+        pub.getPdfPageData = function(n){
+            return new Promise(function(resolve, reject){
+                if(page_data[n]){
+                    resolve(page_data[n]);
+                }
+                else{
+                    pdf.getPage(n+1).then(function(page){
+                        var s = Pla.Param.PAGE_W / (page.pageInfo.view[2]); // set page width
+                        var viewport = page.getViewport(s);
+                        var canv = document.createElement('canvas');
+                        var canv_ctx = canv.getContext('2d');
+                        var canv_pixel_ratio = Pla.util.getOutputScale(canv_ctx);
+
+                        canv.width = Math.floor(viewport.width*canv_pixel_ratio.sx) | 0;
+                        canv.height = Math.floor(viewport.height*canv_pixel_ratio.sy) | 0;
+                        canv_ctx.scale(canv_pixel_ratio.sx, canv_pixel_ratio.sy);
+
+                        page_datum = {};
+                        page_datum.img_boxes = [];
+                        page_datum.canvas = canv;
+                        page_datum.mupla_data = mupla_data[n];
+                        page_datum.n_page = n;
+                        page_datum.n_page_total = page_data.length;
+                        page_data[n] = page_datum;
+                        page.render({
+                            canvasContext: canv_ctx,
+                            viewport: viewport
+                        }).then(function(){
+                            resolve(page_data[n]);
+                        });
+                    }).catch(reject);
+                }
+            });
+
         };
 
         return pub;
@@ -416,7 +410,7 @@
         var dr_canvas = document.getElementById('maincanvas');
         var dr_ctx = dr_canvas.getContext('2d');
 
-        pub.Init = function(render_ctx){
+        pub.initView = function(render_ctx){
             dr_canvas.width = render_ctx.scrx;
             dr_canvas.height = render_ctx.scry;
         };

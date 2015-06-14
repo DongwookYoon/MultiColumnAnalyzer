@@ -97,7 +97,7 @@
                 alert(s_header+s);
                 Pla.recurring_err = true;
                 //Todo replace it with Pla.ctx
-                window.top.location.replace( Pla.util.GetServerUrl() + "upload" );
+                window.top.location.replace( Pla.ctx.err_redirect_url );
             }
         };
 
