@@ -8,31 +8,6 @@
     Pla.util = (function(){
         var pub = {};
 
-        //ToDo remove this.
-        /**
-         * @returns {string} results
-         */
-        pub.GetParameterByName = function(name) {
-            name = name.replace(/[\[]/, "\\[").replace(/[\]]/, "\\]");
-            var regex = new RegExp("[\\?&]" + name + "=([^&#]*)"),
-                results = regex.exec(location.search);
-            return results === null ? "" : decodeURIComponent(results[1].replace(/\+/g, " "));
-        };
-
-        //ToDo replace with Pla.ctx
-
-        /**
-         * @returns {string}
-         */
-        pub.GetServerUrl = function(){
-            if(document.location.hostname == "localhost"){
-                return "https://localhost:8001/";
-            }
-            else{
-                return "https://richreview.net/";
-            }
-        };
-
         pub.getOutputScale = function(ctx) {
             var devicePixelRatio = window.devicePixelRatio || 1;
             var backingStoreRatio = ctx.webkitBackingStorePixelRatio ||
@@ -47,8 +22,6 @@
                 scaled: pixelRatio != 1
             };
         };
-
-
 
         /**
          * Check environments if it's mobile or non-Chrome
