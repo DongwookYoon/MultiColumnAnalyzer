@@ -96,8 +96,7 @@
             if(!Pla.recurring_err){
                 alert(s_header+s);
                 Pla.recurring_err = true;
-                //Todo replace it with Pla.ctx
-                window.top.location.replace( Pla.ctx.err_redirect_url );
+                Pla.override.error();
             }
         };
 
@@ -141,6 +140,25 @@
                 };
 
                 xhr.send();
+            });
+        };
+
+        pub.postJson = function(url, data){
+            return new Promise(function(resolve, reject){
+                var posting = $.ajax({
+                    type: 'POST',
+                    url: url,
+                    data: data,
+                    contentType:"application/jsonrequest"
+                });
+
+                posting.success(function(resp){
+                    resolve(resp);
+                });
+
+                posting.fail(function(resp){
+                    reject(resp);
+                });
             });
         };
 

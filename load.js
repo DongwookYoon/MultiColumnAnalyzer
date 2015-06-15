@@ -1,9 +1,8 @@
 (function(Pla) {
     "use strict";
 
-    Pla.loadApp = function(){
+    Pla.loadApp = function(path_prefix){
         var scripts = [
-            ["view.css", "css"],
             ["pdfjs/pdf.js", "js"],
             ["bowser/bowser.min.js", "js"],
             ["utils.js", "js"],
@@ -39,13 +38,14 @@
 
         var job = function(i){
             if(i !== scripts.length){
-                return Pla.loadJsScript(scripts[i][0], scripts[i][1]).then(
+                return Pla.loadJsScript(path_prefix+scripts[i][0], scripts[i][1]).then(
                     function(){
                         return job(i+1);
                     }
                 );
             }
             else{
+                PDFJS.workerSrc = path_prefix+'pdfjs/pdf.worker.js';
                 return Pla.ctrl.start();
             }
         };
@@ -57,5 +57,4 @@
         );
     };
 
-    Pla.loadApp();
 }(window.Pla = window.Pla || {}));

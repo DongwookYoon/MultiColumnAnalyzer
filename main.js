@@ -41,27 +41,13 @@
             ).then(
                 uploadPdfLayoutJs
             ).then(
-                function(link){
-                    window.top.location.replace(link);
-                }
+                Pla.override.done
             ).catch(Pla.util.handleErr);
         };
 
         var initCtrl = function(){
             document.onkeydown = onKeyDown;
             document.onmouseup = onMouseUp;
-
-            var $maincanvas = $("#maincanvas");
-            render_ctx.scrx = $maincanvas.width();
-            render_ctx.scry = $maincanvas.height();
-
-            Pla.ctx = {
-                mupla_pdfs_folder_path: Pla.util.GetServerUrl()+"mupla_pdfs/"+Pla.util.GetParameterByName("uuid")+"/",
-                err_redirect_url: Pla.util.GetServerUrl() + "upload",
-                doc_layout_upload_url: Pla.util.GetServerUrl()+"upload?mode=UploadDocLayout&uuid="+Pla.util.GetParameterByName("uuid")
-            };
-
-            Pla.View.initView(render_ctx);
 
             var promise = Pla.model.initModel(Pla.ctx.mupla_pdfs_folder_path);
             page_layout_js = new Array(Pla.model.getNumPages());
@@ -123,7 +109,7 @@
                 console.log("> runPla at page", cur_page);
                 preprocessTextBoxes(
                     page.mupla_data,
-                    {w: page.canvas.width, h: page.canvas.height}
+                    {w: page.pdfjs_canv.width, h: page.pdfjs_canv.height}
                 );
 
                 var rects = page.mupla_data.GetRects();
@@ -155,7 +141,7 @@
                 render_ctx.n_page = page.n_page;
                 render_ctx.n_page_total = page.n_page_total;
 
-                Pla.View.Render(render_ctx, page.canvas);
+                Pla.View.Render(render_ctx, page.pdfjs_canv);
 
                 page_layout_js[cur_page] = {
                     bbox: page.mupla_data.bbox,
@@ -163,11 +149,11 @@
             }).catch(Pla.util.handleErr);
         };
 
-        var preprocessTextBoxes = function(mupla, canvas_size){
+        var preprocessTextBoxes = function(mupla, pdfjs_canv_size){
             var i, j, lines, bbox;
             if(typeof mupla.resize_done === "undefined"){
-                var ratio_x = canvas_size.w/(mupla.bbox[2]-mupla.bbox[0]);
-                var ratio_y = canvas_size.h/(mupla.bbox[3]-mupla.bbox[1]);
+                var ratio_x = pdfjs_canv_size.w/(mupla.bbox[2]-mupla.bbox[0]);
+                var ratio_y = pdfjs_canv_size.h/(mupla.bbox[3]-mupla.bbox[1]);
                 for( i = 0; i < mupla.tblocks.length; ++i){
                     lines = mupla.tblocks[i].lines;
                     for( j = 0; j < lines.length; ++j){
@@ -385,7 +371,7 @@
 
                         page_datum = {};
                         page_datum.img_boxes = [];
-                        page_datum.canvas = canv;
+                        page_datum.pdfjs_canv = canv;
                         page_datum.mupla_data = mupla_data[n];
                         page_datum.n_page = n;
                         page_datum.n_page_total = page_data.length;
@@ -407,57 +393,82 @@
 
     Pla.View = (function() {
         var pub = {};
+        var $maincanvas = $("#maincanvas");
         var dr_canvas = document.getElementById('maincanvas');
         var dr_ctx = dr_canvas.getContext('2d');
 
-        pub.initView = function(render_ctx){
-            dr_canvas.width = render_ctx.scrx;
-            dr_canvas.height = render_ctx.scry;
+        pub.Render = function(render_ctx, pdfjs_canv){
+
+            var margin = 10;
+
+            var scale = pdfjs_canv.height / $maincanvas.height();
+            dr_canvas.width = $maincanvas.width()*scale + 2.0*margin;
+            dr_canvas.height = $maincanvas.height()*scale + 2.0*margin;
+
+            dr_ctx.fillStyle = '#f9f9f9';
+            dr_ctx.fillRect(0, 0, dr_canvas.width, dr_canvas.height);
+
+            dr_ctx.save();
+            dr_ctx.translate(dr_canvas.width*0.5 - pdfjs_canv.width*0.5, margin);
+            { // canvas context save
+                renderInner(render_ctx, pdfjs_canv)
+            } // canvas context restore
+            dr_ctx.restore();
         };
 
-        pub.Render = function(render_ctx, canvas){
+        var renderInner = function(render_ctx, pdfjs_canv){
             var i, j, h;
             var display = {
+                rects: false,
+                ycuts: false,
                 ycut_blocks: false,
                 textbox_by_regions: true,
-                block_group_bbox: true,
-                histogram: true,
+                xcuts: false,
+                alley_range: false,
+                block_group_bbox: false,
+                histogram: false,
                 texttearing_pieces: false
             };
 
-            dr_ctx.fillStyle = 'lightgray';
-            dr_ctx.fillRect(0, 0, render_ctx.scrx, render_ctx.scry);
+            dr_ctx.drawImage(pdfjs_canv,
+                0, 0, pdfjs_canv.width, pdfjs_canv.height,
+                0, 0, pdfjs_canv.width, pdfjs_canv.height);
 
-            dr_ctx.drawImage(canvas,
-                0, 0, canvas.width, canvas.height,
-                0, 0, canvas.width, canvas.height);
-
+            dr_ctx.strokeStyle = 'black';
+            dr_ctx.lineWidth = 1;
+            dr_ctx.beginPath();
+            dr_ctx.rect(0, 0, pdfjs_canv.width, pdfjs_canv.height);
+            dr_ctx.stroke();
 
             dr_ctx.fillStyle = "black";
             dr_ctx.font = "bold 16px Arial";
             dr_ctx.textAlign = 'right';
             dr_ctx.fillText((render_ctx.n_page+1) + " / " + (render_ctx.n_page_total), 470, 30);
 
-            var rects = render_ctx.rects;
-            rects.forEach(function(rect){
-                dr_ctx.strokeStyle = 'rgba(0, 0, 255, 0.5)';
-                dr_ctx.lineWidth = 1;
-                dr_ctx.beginPath();
-                dr_ctx.rect(rect[0], rect[1], rect[2]-rect[0], rect[3]-rect[1]);
-                dr_ctx.stroke();
-            });
+            if(display.rects){
+                var rects = render_ctx.rects;
+                rects.forEach(function(rect){
+                    dr_ctx.strokeStyle = 'rgba(0, 0, 255, 0.5)';
+                    dr_ctx.lineWidth = 1;
+                    dr_ctx.beginPath();
+                    dr_ctx.rect(rect[0], rect[1], rect[2]-rect[0], rect[3]-rect[1]);
+                    dr_ctx.stroke();
+                });
+            }
 
-            var ycuts = render_ctx.ycuts;
-            var x = 2;
-            ycuts.forEach(function(yi){
-                dr_ctx.strokeStyle = 'rgba(255, 0, 0, 1.0)';
-                dr_ctx.lineWidth = 3;
-                dr_ctx.beginPath();
-                dr_ctx.moveTo(x, yi[0]);
-                dr_ctx.lineTo(x, yi[1]);
-                dr_ctx.stroke();
-                x += 2;
-            });
+            if(display.ycuts){
+                var ycuts = render_ctx.ycuts;
+                var x = 2;
+                ycuts.forEach(function(yi){
+                    dr_ctx.strokeStyle = 'rgba(255, 0, 0, 1.0)';
+                    dr_ctx.lineWidth = 3;
+                    dr_ctx.beginPath();
+                    dr_ctx.moveTo(x, yi[0]);
+                    dr_ctx.lineTo(x, yi[1]);
+                    dr_ctx.stroke();
+                    x += 2;
+                });
+            }
 
             if(display.ycut_blocks){
                 var ycut_blocks = render_ctx.ycut_blocks;
@@ -472,30 +483,32 @@
                 });
             }
 
-
             var pla_ctx = render_ctx.pla_ctx;
-            for(i = 0; i < pla_ctx.xcuts.length; ++i){
-                pla_ctx.xcuts[i].forEach(function(cut){
-                    dr_ctx.fillStyle = 'rgba(0, 255, 255, 0.25)';
-                    dr_ctx.fillRect(
-                        cut[0],
-                        pla_ctx.ycut_blocks[i].bbox[1],
-                        cut[1]-cut[0],
-                        pla_ctx.ycut_blocks[i].bbox[3]-pla_ctx.ycut_blocks[i].bbox[1]
-                    );
-                });
+            if(display.xcuts){
+                for(i = 0; i < pla_ctx.xcuts.length; ++i){
+                    pla_ctx.xcuts[i].forEach(function(cut){
+                        dr_ctx.fillStyle = 'rgba(0, 255, 255, 0.25)';
+                        dr_ctx.fillRect(
+                            cut[0],
+                            pla_ctx.ycut_blocks[i].bbox[1],
+                            cut[1]-cut[0],
+                            pla_ctx.ycut_blocks[i].bbox[3]-pla_ctx.ycut_blocks[i].bbox[1]
+                        );
+                    });
+                }
             }
 
-            // alley constraint lines
-            dr_ctx.strokeStyle = 'rgba(50, 50, 50, 0.1)';
-            dr_ctx.lineWidth = 2;
-            dr_ctx.beginPath();
-            dr_ctx.moveTo(render_ctx.alley_range[0], 0);
-            dr_ctx.lineTo(render_ctx.alley_range[0], canvas.height);
-            dr_ctx.moveTo(render_ctx.alley_range[1], 0);
-            dr_ctx.lineTo(render_ctx.alley_range[1], canvas.height);
-            dr_ctx.stroke();
-
+            if(display.alley_range){
+                // alley constraint lines
+                dr_ctx.strokeStyle = 'rgba(50, 50, 50, 0.1)';
+                dr_ctx.lineWidth = 2;
+                dr_ctx.beginPath();
+                dr_ctx.moveTo(render_ctx.alley_range[0], 0);
+                dr_ctx.lineTo(render_ctx.alley_range[0], pdfjs_canv.height);
+                dr_ctx.moveTo(render_ctx.alley_range[1], 0);
+                dr_ctx.lineTo(render_ctx.alley_range[1], pdfjs_canv.height);
+                dr_ctx.stroke();
+            }
 
             if(display.textbox_by_regions){ // color boxes differently
                 var COLORS = [
@@ -518,7 +531,6 @@
                     }
                 }
             }
-
 
             var bgrp;
             for(i = 0; bgrp = pla_ctx.block_group[i]; ++i){
@@ -633,7 +645,6 @@
                     }
                 }
             }
-
         };
 
         return pub;
