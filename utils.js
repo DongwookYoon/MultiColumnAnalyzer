@@ -28,6 +28,7 @@
          */
         pub.checkEnv = function(){
             return new Promise(function(resolve, reject){
+                /*
                 if( /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
                     reject(new Error(
                         "RichReviewWebApp WebApp does not support mobile platform yet.\n"+
@@ -36,7 +37,7 @@
                 else if(!bowser.chrome){
                     reject(new Error(
                         "RichReviewWebApp only supports the Chrome browser."));
-                }
+                }*/
                 resolve();
             });
         };
@@ -69,7 +70,7 @@
             if(!Pla.recurring_err){
                 alert(s_header+s);
                 Pla.recurring_err = true;
-                Pla.override.error();
+                Pla.override.error(err);
             }
         };
 

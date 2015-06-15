@@ -84,7 +84,8 @@
                         ver: 6.0,
                         pages: page_layout_js
                     };
-
+                    resolve(doc_layout_js);
+                    /*
                     var posting = $.ajax({
                         type: 'POST',
                         url: Pla.ctx.doc_layout_upload_url,
@@ -98,7 +99,7 @@
 
                     posting.fail(function(resp){
                         reject(resp);
-                    });
+                    });*/
 
                 }
             );
