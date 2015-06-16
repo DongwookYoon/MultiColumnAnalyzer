@@ -39,10 +39,10 @@
             ).then(
                 batchRunPla
             ).then(
-                uploadPdfLayoutJs
-            ).then(
                 Pla.override.done
-            ).catch(Pla.util.handleErr);
+            ).catch(
+                Pla.util.handleErr
+            );
         };
 
         var initCtrl = function(){
@@ -69,40 +69,17 @@
                     }
                     else{
                         cur_page -= 1;
-                        resolve();
+                        resolve(
+                            {
+                                ver: 6.0,
+                                pages: page_layout_js
+                            }
+                        );
                     }
                 };
                 cur_page = 0;
                 job();
             });
-        };
-
-        var uploadPdfLayoutJs = function(){
-            return new Promise(
-                function(resolve, reject){
-                    var doc_layout_js = {
-                        ver: 6.0,
-                        pages: page_layout_js
-                    };
-                    resolve(doc_layout_js);
-                    /*
-                    var posting = $.ajax({
-                        type: 'POST',
-                        url: Pla.ctx.doc_layout_upload_url,
-                        data: JSON.stringify(doc_layout_js),
-                        contentType:"application/jsonrequest"
-                    });
-
-                    posting.success(function(resp){
-                        resolve(resp);
-                    });
-
-                    posting.fail(function(resp){
-                        reject(resp);
-                    });*/
-
-                }
-            );
         };
 
         var runPla = function(){
