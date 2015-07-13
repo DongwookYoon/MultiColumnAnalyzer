@@ -49,17 +49,19 @@
             document.onkeydown = onKeyDown;
             document.onmouseup = onMouseUp;
 
-            var promise = Pla.model.initModel(Pla.ctx.mupla_pdfs_folder_path);
+            var promise = Pla.model.initModel(Pla.ctx.pdf_url, Pla.ctx.js_url);
             page_layout_js = new Array(Pla.model.getNumPages());
             return promise;
         };
 
         var batchRunPla = function(){
+            console.log("batchRunPla");
             return new Promise(function(resolve, reject){
                 var job = function (){
                     if(cur_page != Pla.model.getNumPages()){
                         runPla().then(
                             function(){
+                                console.log("batchRunPla, page: ", cur_page);
                                 cur_page += 1;
                                 job();
                             }
@@ -69,6 +71,8 @@
                     }
                     else{
                         cur_page -= 1;
+
+                        console.log("batchRunPla, resolve");
                         resolve(
                             {
                                 ver: 6.0,
@@ -254,16 +258,18 @@
 
         pub.getNumPages = function(){return num_pages;};
 
-        pub.initModel = function(dir_path){
-            return getMuPlaJs(dir_path).then(
-                getPdf
+        pub.initModel = function(pdf_url, js_url){
+            return getMuPlaJs(js_url).then(
+                function(){
+                    return getPdf(pdf_url)
+                }
             );
         };
 
-        function getMuPlaJs(dir_path){
+        function getMuPlaJs(js_url){
             return new Promise(function(resolve, reject){
                 Pla.util.getUrlData(
-                    dir_path+Pla.Const.MUPLA_FILENAME,
+                    js_url,
                     ""
                 ).then(
                     function(js){
@@ -280,7 +286,7 @@
                                 return rects;
                             };
                         }
-                        resolve(dir_path+Pla.Const.PDF_FILENAME);
+                        resolve();
                     }
                 ).catch(
                     reject
@@ -288,9 +294,9 @@
             });
         }
 
-        function getPdf(pdf_filepath){
+        function getPdf(pdf_url){
             return Pla.util.getUrlData(
-                pdf_filepath,
+                pdf_url,
                 "arraybuffer",
                 null
             ).then(
